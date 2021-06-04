@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtCore import Qt
 from datetime import datetime
 
+import urllib.parse
 import os
 import sys
 import requests
@@ -99,10 +100,12 @@ class MainWindow(QMainWindow):
 		self.locationInputBox.setText(self.locationChoiceTable.itemAt(row, col).text())
 
 	def locationSelected(self):
-		self.tideTimeWidget = TideTimeWindow(self.getIdFromName(self.locationInputBox.text(), self.currentTableData))
+		if (receivedID := self.getIdFromName(self.locationInputBox.text(), self.currentTableData)) != "-1":
+			self.tideTimeWidget = TideTimeWindow(receivedID)
 
 	@staticmethod
 	def getIdFromName(name, data):
+		# Default, look through given names
 		for dp in data:
 			try:
 				if dp["properties"]["Name"].lower() == name.lower():
@@ -110,7 +113,38 @@ class MainWindow(QMainWindow):
 			except KeyError:
 				pass
 
-		return "0001"
+		# Find nearest place
+
+		posData = json.loads(requests.get(f"http://api.positionstack.com/v1/forward?access_key={os.environ['API_KEY_2']}&query={urllib.parse.quote(name)}").text)
+
+		distances = []
+
+		try:
+			_ = posData["error"]
+			messageBox = QMessageBox()
+			messageBox.setText("Invalid location. Please try a different location.")
+			messageBox.exec_()
+			return "-1"
+		except KeyError:
+			lat = posData["data"][0]["latitude"]
+			long = posData["data"][0]["longitude"]
+			for dp in data:
+				try:
+					coordinates = dp["geometry"]["coordinates"]
+					distances.append(((coordinates[1] - lat) ** 2) + ((coordinates[0] - long) ** 2))
+				except KeyError:
+					distances.append(130000)  # ~ 360 ** 2
+
+			minDistance = (-1, 130000)  # Index, distance
+			for i, distance in enumerate(distances):
+				if distance < minDistance[1]:
+					minDistance = (i, distance)
+
+			messageBox = QMessageBox()
+			messageBox.setText(f"Closest valid location: {data[minDistance[0]]['properties']['Name']}")
+			messageBox.exec_()
+
+			return data[minDistance[0]]["properties"]["Id"]
 
 
 def main(args):
